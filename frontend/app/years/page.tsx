@@ -1,4 +1,4 @@
-import { ChipList } from "@/components/common/Browse";
+import { BrowseIndex } from "@/components/common/BrowseIndex";
 import { ErrorState } from "@/components/common/States";
 import { getYears } from "@/lib/server-api";
 
@@ -26,11 +26,12 @@ export default async function YearsPage() {
   }
 
   return (
-    <ChipList
+    <BrowseIndex
       heading="Năm phát hành"
-      description={`${years.length} năm để bạn khám phá`}
+      description="Phim sắp xếp theo năm ra mắt, mới nhất trước"
       items={years}
       basePath="/years"
+      variant="tile"
     />
   );
 }

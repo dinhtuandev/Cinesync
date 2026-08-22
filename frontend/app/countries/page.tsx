@@ -1,4 +1,4 @@
-import { ChipList } from "@/components/common/Browse";
+import { BrowseIndex } from "@/components/common/BrowseIndex";
 import { ErrorState } from "@/components/common/States";
 import { getCountries } from "@/lib/server-api";
 
@@ -26,11 +26,12 @@ export default async function CountriesPage() {
   }
 
   return (
-    <ChipList
+    <BrowseIndex
       heading="Quốc gia"
       description="Phim theo từng quốc gia sản xuất"
       items={countries}
       basePath="/countries"
+      variant="card"
     />
   );
 }

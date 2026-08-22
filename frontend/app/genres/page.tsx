@@ -1,4 +1,4 @@
-import { ChipList } from "@/components/common/Browse";
+import { BrowseIndex } from "@/components/common/BrowseIndex";
 import { ErrorState } from "@/components/common/States";
 import { getGenres } from "@/lib/server-api";
 
@@ -26,11 +26,12 @@ export default async function GenresPage() {
   }
 
   return (
-    <ChipList
+    <BrowseIndex
       heading="Thể loại phim"
-      description={`${genres.length} thể loại để bạn khám phá`}
+      description="Khám phá phim theo từng thể loại"
       items={genres}
       basePath="/genres"
+      variant="card"
     />
   );
 }
