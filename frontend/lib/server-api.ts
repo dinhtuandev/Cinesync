@@ -39,6 +39,7 @@ async function withFallback<T>(fn: (provider: (typeof providers)[number]) => Pro
   throw lastError;
 }
 export type { ListType } from "./providers/types";
+export { MOVIE_LIST_TYPES } from "./providers/types";
 export type { NamedItem, PagedMovies } from "./providers/base";
 
 export async function getMovieList(

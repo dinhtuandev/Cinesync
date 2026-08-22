@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { VideoPlayerFrame } from "@/components/watch/VideoPlayerFrame";
 import { getMovieDetail } from "@/lib/server-api";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ episode?: string }>;
+  searchParams: Promise<{ episode?: string; server?: string }>;
 }
 
 // Trang watch là dynamic (không ISR): link video/embed cần tương đối tươi.
@@ -25,70 +28,114 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
   if (!data) notFound();
 
   const { movie, episodes } = data;
-  const servers = episodes.length ? episodes : [{ serverName: "Server #1", serverData: [] }];
-
+  const servers = episodes.length ? episodes : [];
   const activeServer =
     servers.find((s) => s.serverData.some((e) => e.slug === episodeParam)) ?? servers[0];
+  if (!activeServer) notFound();
+
+  const episodeIndex = activeServer.serverData.findIndex(
+    (e) => e.slug === (episodeParam ?? activeServer.serverData[0]?.slug),
+  );
   const activeEpisode =
-    activeServer.serverData.find((e) => e.slug === episodeParam) ??
-    activeServer.serverData[0] ??
-    null;
+    activeServer.serverData[episodeIndex] ?? activeServer.serverData[0] ?? null;
+  if (!activeEpisode) notFound();
 
   // Ưu tiên m3u8 (tương lai dùng player HLS riêng); hiện tại iframe chỉ phát được embed
-  const hlsSource = activeEpisode?.linkM3u8 ?? null;
-  const embedSource = !hlsSource ? (activeEpisode?.linkEmbed || movie.trailerUrl || "") : "";
+  const hlsSource = activeEpisode.linkM3u8;
+  const embedSource = hlsSource ? "" : activeEpisode.linkEmbed || movie.trailerUrl || "";
   const isHls = Boolean(hlsSource);
 
+  const epHref = (epSlug: string) =>
+    `/movies/${movie.slug}/watch?episode=${encodeURIComponent(epSlug)}`;
+  const prevEpisode =
+    episodeIndex > 0 ? activeServer.serverData[episodeIndex - 1] : null;
+  const nextEpisode =
+    episodeIndex >= 0 && episodeIndex < activeServer.serverData.length - 1
+      ? activeServer.serverData[episodeIndex + 1]
+      : null;
+
   return (
-    <div className="space-y-4 pt-6">
-      <div className="flex items-center gap-3 text-sm text-neutral-400">
-        <Link href={`/movies/${movie.slug}`} className="hover:text-white">
-          ← {movie.name}
-        </Link>
-        {activeEpisode ? (
-          <span className="rounded bg-neutral-800 px-2 py-0.5 text-xs text-neutral-200">
-            {activeEpisode.name}
-          </span>
+    <div className="space-y-4 pt-4 md:pt-6">
+      {/* Breadcrumb */}
+      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+        <Button variant="ghost" size="sm" className="-ml-2 h-7" asChild>
+          <Link href={`/movies/${movie.slug}`}>
+            <ArrowLeft aria-hidden /> {movie.name}
+          </Link>
+        </Button>
+        {activeServer.serverData.length > 1 ? (
+          <Badge variant="secondary">{activeEpisode.name}</Badge>
         ) : null}
-      </div>
+      </nav>
 
       <VideoPlayerFrame
-        src={isHls ? (hlsSource as string) : embedSource}
-        title={`${movie.name} — ${activeEpisode?.name ?? "Full"}`}
+        src={isHls ? hlsSource! : embedSource}
+        title={`${movie.name} — ${activeEpisode.name}`}
         isHls={isHls}
       />
 
-      {activeServer.serverData.length > 0 ? (
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-neutral-200">{activeServer.serverName}</h2>
-          <div className="max-h-56 overflow-y-auto rounded-xl border border-neutral-800 p-3">
-            <div className="flex flex-wrap gap-2">
-              {activeServer.serverData.map((ep) => {
-                const isActive = ep.slug === activeEpisode?.slug;
-                return (
-                  <Link
-                    key={ep.slug}
-                    href={`/movies/${movie.slug}/watch?episode=${encodeURIComponent(ep.slug)}`}
-                    scroll={false}
-                    className={`min-w-14 rounded-lg px-3 py-2 text-center text-sm transition ${
-                      isActive
-                        ? "bg-rose-600 font-medium text-white"
-                        : "border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-rose-600 hover:text-white"
-                    }`}
+      {/* Điều khiển tập */}
+      {activeServer.serverData.length > 1 ? (
+        <div className="flex items-center justify-between gap-2">
+          {prevEpisode ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={epHref(prevEpisode.slug)} rel="prev">
+                <ChevronLeft aria-hidden /> Tập trước
+              </Link>
+            </Button>
+          ) : (
+            <span />
+          )}
+          <p className="text-xs text-muted-foreground" aria-live="polite">
+            Đang xem: <span className="font-medium text-foreground">{activeEpisode.name}</span> ·{" "}
+            {activeServer.serverName}
+          </p>
+          {nextEpisode ? (
+            <Button variant="outline" size="sm" asChild>
+              <Link href={epHref(nextEpisode.slug)} rel="next">
+                Tập sau <ChevronRight aria-hidden />
+              </Link>
+            </Button>
+          ) : (
+            <span />
+          )}
+        </div>
+      ) : null}
+
+      {/* Danh sách tập */}
+      {activeServer.serverData.length > 1 ? (
+        <section aria-label="Danh sách tập" className="space-y-3">
+          <h2 className="text-sm font-semibold text-muted-foreground">
+            {activeServer.serverName}
+          </h2>
+          <ol className="grid max-h-64 grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2 overflow-y-auto rounded-xl border border-border bg-card/50 p-3">
+            {activeServer.serverData.map((ep) => {
+              const isActive = ep.slug === activeEpisode?.slug;
+              return (
+                <li key={ep.slug}>
+                  <Button
+                    variant={isActive ? "default" : "secondary"}
+                    size="sm"
+                    className="w-full justify-center font-normal"
+                    aria-current={isActive ? "true" : undefined}
+                    asChild
                   >
-                    {ep.name}
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
+                    <Link href={epHref(ep.slug)} scroll={false}>
+                      {ep.name}
+                    </Link>
+                  </Button>
+                </li>
+              );
+            })}
+          </ol>
+
           {servers.length > 1 ? (
-            <p className="text-xs text-neutral-500">
-              Các server khác:{" "}
+            <p className="text-xs text-muted-foreground">
+              Server khác:{" "}
               {servers
                 .filter((s) => s !== activeServer)
                 .map((s) => s.serverName)
-                .join(", ")}
+                .join(" · ")}
             </p>
           ) : null}
         </section>

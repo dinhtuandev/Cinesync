@@ -1,29 +1,36 @@
-import Link from "next/link";
+import { ChipList } from "@/components/common/Browse";
+import { ErrorState } from "@/components/common/States";
 import { getYears } from "@/lib/server-api";
 
 export const revalidate = 3600;
 
+export const metadata = { title: "Năm phát hành" };
+
 export default async function YearsPage() {
   let years: { name: string; slug: string }[] = [];
+  let failed = false;
   try {
     years = await getYears();
   } catch {
-    years = [];
+    failed = true;
   }
+
+  if (failed) {
+    return (
+      <ErrorState
+        className="mt-8"
+        title="Không tải được danh sách năm phát hành"
+        description="Nguồn dữ liệu đang gặp sự cố. Vui lòng thử lại sau."
+      />
+    );
+  }
+
   return (
-    <div className="space-y-4 pt-6">
-      <h1 className="text-lg font-semibold text-neutral-100">Năm phát hành</h1>
-      <div className="flex flex-wrap gap-2">
-        {years.map((y) => (
-          <Link
-            key={y.slug}
-            href={`/years/${y.slug}`}
-            className="rounded-full border border-neutral-700 bg-neutral-900 px-4 py-1.5 text-sm text-neutral-300 transition hover:border-rose-600 hover:text-white"
-          >
-            {y.name}
-          </Link>
-        ))}
-      </div>
-    </div>
+    <ChipList
+      heading="Năm phát hành"
+      description={`${years.length} năm để bạn khám phá`}
+      items={years}
+      basePath="/years"
+    />
   );
 }
