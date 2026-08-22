@@ -9,6 +9,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * buffering, bitrate, adaptive quality hay internals của player bên trong.
  * Chỉ kiểm soát được vòng đời container (retry, timeout, fullscreen).
  *
+ * Che giấu nguồn (source masking):
+ * - `referrerPolicy="no-referrer"` — không gửi Referer, provider không thấy
+ *   domain CineSync trong log.
+ * - Overlay đè lên vùng logo/title/watermark quen thuộc của player nguồn
+ *   (top bar + góc dưới phải), `pointer-events-none` để không chặn điều
+ *   khiển của player bên dưới.
+ * - GIỚI HẠN: người dùng rành kỹ thuật vẫn thấy URL iframe trong DevTools.
+ *   Che giấu tuyệt đối chỉ đạt được khi tự host video qua HLS (Backend).
+ *
  * Khi Backend cung cấp linkM3u8 thật, nhánh `isHls` là chỗ cắm HLS.js
  * để kiểm soát đầy đủ playback. KHÔNG nhánh này thành HLS.js cho tới khi
  * có nguồn HLS thực tế.
@@ -18,11 +27,18 @@ interface VideoPlayerFrameProps {
   title: string;
   /** true nếu nguồn là link m3u8 (chưa phát trực tiếp được trong iframe) */
   isHls?: boolean;
+  /** Che logo/title/watermark của nguồn embed (mặc định bật) */
+  maskSourceBranding?: boolean;
 }
 
 const LOAD_TIMEOUT_MS = 15_000;
 
-export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrameProps) {
+export function VideoPlayerFrame({
+  src,
+  title,
+  isHls = false,
+  maskSourceBranding = true,
+}: VideoPlayerFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -67,6 +83,7 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
           onLoad={handleLoad}
           allowFullScreen
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          referrerPolicy="no-referrer"
           className="h-full w-full border-0"
         />
       ) : (
@@ -113,6 +130,25 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
             </button>
           </div>
         </div>
+      ) : null}
+
+      {src && !isHls && maskSourceBranding ? (
+        <>
+          {/* Thanh trên: che title bar/logo của player nguồn, thay bằng brand CineSync */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 z-[5] flex h-11 items-center bg-gradient-to-b from-black via-black/75 to-transparent px-3"
+          >
+            <span className="text-sm font-bold tracking-wide text-white">
+              Cine<span className="text-rose-500">Sync</span>
+            </span>
+          </div>
+          {/* Góc dưới phải: vị trí watermark phổ biến của player nguồn */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute bottom-2 right-2 z-[5] h-7 w-28 rounded-md border border-white/5 bg-black/55 backdrop-blur-sm"
+          />
+        </>
       ) : null}
 
       {src && !isHls ? (
