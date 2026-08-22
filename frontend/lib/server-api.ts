@@ -1,205 +1,51 @@
 import "server-only";
 
-import type {
-  EpisodeServer,
-  MovieDetail,
-  MovieDetailResponse,
-  MovieListItem,
-} from "./types";
+import type { MovieDetailResponse, MovieListItem } from "./types";
+import { MdpError, type NamedItem, type PagedMovies } from "./providers/base";
+import { createKkphimProvider } from "./providers/kkphim";
+import { createVsmovProvider } from "./providers/vsmov";
+import type { ListType } from "./providers/types";
 
-const BASE_URL = process.env.MOVIE_PROVIDER_BASE_URL ?? "";
+// ─── Fallback chain: VSMOV là PRIMARY, KKPhim là FALLBACK khi VSMOV sập ───
+// - Provider fail (timeout/network/HTTP lỗi) → thử provider kế tiếp.
+// - Lỗi programming/runtime khác được rethrow ngay, không nuốt.
+// - Mỗi provider tự cache với key prefix riêng (`vsmov:`, `kkphim:`),
+//   stale-on-error vẫn hoạt động ở tầng từng provider.
 
-if (!BASE_URL) {
-  console.warn("MOVIE_PROVIDER_BASE_URL chưa được cấu hình — dữ liệu phim sẽ không tải được");
+const PROVIDER_BASE_URLS = [
+  process.env.MOVIE_PROVIDER_BASE_URL,
+  process.env.MOVIE_PROVIDER_FALLBACK_URL,
+].filter((url): url is string => Boolean(url));
+
+const providers = PROVIDER_BASE_URLS.map((baseUrl, index) =>
+  index === 0 ? createVsmovProvider(baseUrl) : createKkphimProvider(baseUrl),
+);
+
+if (!providers.length) {
+  console.warn("MOVIE_PROVIDER_BASE_URL chưa cấu hình — dữ liệu phim sẽ không tải được");
 }
 
-// ─── Cache TTL theo BR-08: list 15 phút, detail 60 phút; MDP lỗi → trả stale ───
-// Best-effort per-runtime cache.
-// Nằm trong bộ nhớ của MỘT runtime Node duy nhất — KHÔNG chia sẻ giữa
-// các instance serverless của Vercel. Mỗi cold start là một cache mới.
-const TTL_MS = { list: 15 * 60 * 1000, detail: 60 * 60 * 1000 } as const;
-const MAX_CACHE_ENTRIES = 500;
-
-type CacheEntry = { data: unknown; storedAt: number; expiresAt: number };
-const responseCache = new Map<string, CacheEntry>();
-const inflight = new Map<string, Promise<unknown>>();
-
-/** Lỗi từ upstream MDP (HTTP lỗi, network, timeout) — đủ điều kiện stale-on-error. */
-export class MdpError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "MdpError";
+async function withFallback<T>(fn: (provider: (typeof providers)[number]) => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (const provider of providers) {
+    try {
+      return await fn(provider);
+    } catch (error) {
+      lastError = error;
+      // Chỉ fallback cho lỗi upstream; lỗi khác rethrow ngay
+      if (!(error instanceof MdpError)) throw error;
+    }
   }
+  throw lastError;
 }
-
-function evictIfNeeded() {
-  while (responseCache.size >= MAX_CACHE_ENTRIES) {
-    const oldest = responseCache.keys().next().value;
-    if (oldest === undefined) break;
-    responseCache.delete(oldest);
-  }
-}
-
-async function withCache<T>(
-  key: string,
-  kind: keyof typeof TTL_MS,
-  fetcher: () => Promise<T>,
-  opts: { maxAgeMs?: number } = {},
-): Promise<T> {
-  const now = Date.now();
-  const hit = responseCache.get(key);
-  // Fresh khi chưa hết TTL và (nếu có ràng buộc maxAgeMs) không cũ hơn maxAge.
-  // maxAgeMs dùng cho dữ liệu cần tươi hơn TTL chuẩn (VD: link video ở trang watch).
-  if (
-    hit &&
-    hit.expiresAt > now &&
-    now - hit.storedAt <= (opts.maxAgeMs ?? Number.POSITIVE_INFINITY)
-  ) {
-    return hit.data as T;
-  }
-
-  // In-flight dedup: các request đồng thời cùng key dùng chung 1 Promise.
-  const pending = inflight.get(key);
-  if (pending) return pending as Promise<T>;
-
-  const task = fetcher()
-    .then((data) => {
-      evictIfNeeded();
-      responseCache.set(key, { data, storedAt: Date.now(), expiresAt: Date.now() + TTL_MS[kind] });
-      return data;
-    })
-    .finally(() => inflight.delete(key)); // cleanup cả success lẫn rejection
-
-  inflight.set(key, task);
-  try {
-    return await task;
-  } catch (error) {
-    // Stale-on-error CHỈ cho lỗi upstream MDP (timeout/network/HTTP lỗi).
-    // Lỗi programming/runtime khác (TypeError trong normalize...) được rethrow,
-    // không nuốt lỗi bằng data cũ.
-    if (hit && error instanceof MdpError) return hit.data as T;
-    throw error;
-  }
-}
-
-interface MdpItem {
-  name: string;
-  origin_name?: string;
-  slug: string;
-  poster_url?: unknown;
-  thumb_url?: unknown;
-  year?: number;
-  quality?: string;
-  lang?: string;
-  type?: string;
-  episode_current?: number | string | null;
-  episode_total?: number | null;
-}
-
-interface MdpPagination {
-  totalItems?: number;
-  totalItemsPerPage?: number;
-  currentPage?: number;
-  totalPages?: number;
-}
-
-function str(value: unknown): string {
-  return typeof value === "string" && value ? value : "";
-}
-
-export interface PagedMovies {
-  items: MovieListItem[];
-  page: number;
-  totalPages: number;
-}
-
-function normalizeItem(item: MdpItem): MovieListItem {
-  const isSeries = item.type === "series";
-  return {
-    slug: item.slug,
-    name: item.name ?? "",
-    originName: item.origin_name ?? "",
-    posterUrl: str(item.poster_url),
-    thumbUrl: str(item.thumb_url),
-    year: typeof item.year === "number" ? item.year : 0,
-    quality: (item.quality as MovieListItem["quality"]) ?? "HD",
-    lang: (item.lang as MovieListItem["lang"]) ?? "Vietsub",
-    episodeCurrent:
-      isSeries && typeof item.episode_current === "number"
-        ? item.episode_current
-        : undefined,
-    episodeTotal:
-      isSeries && typeof item.episode_total === "number" ? item.episode_total : undefined,
-  };
-}
-
-const MDP_TIMEOUT_MS = 8_000;
-
-async function mdpGet(path: string, params: Record<string, string | number> = {}) {
-  const url = new URL(path.replace(/^\//, ""), `${BASE_URL}/`);
-  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(MDP_TIMEOUT_MS),
-    });
-  } catch (error) {
-    // Phân loại: timeout/abort hoặc network error đều là lỗi upstream → MdpError
-    const reason =
-      error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-        ? "timeout"
-        : "network error";
-    throw new MdpError(`MDP ${reason}: ${path}`);
-  }
-  if (!res.ok) throw new MdpError(`MDP ${res.status}: ${path}`);
-  return res.json();
-}
-
-function extractItems(json: Record<string, unknown>): {
-  rawItems: MdpItem[];
-  pagination: MdpPagination | null;
-} {
-  const data = (json.data ?? {}) as Record<string, unknown>;
-  const rawItems = (json.items ?? data.items ?? []) as MdpItem[];
-  const pagination = (json.pagination ?? (data.pagination as MdpPagination) ?? null) as
-    | MdpPagination
-    | null;
-  return { rawItems, pagination };
-}
-
-function toPagedMovies(json: Record<string, unknown>): PagedMovies {
-  const { rawItems, pagination } = extractItems(json);
-  return {
-    items: rawItems.filter((i) => i?.slug).map(normalizeItem),
-    page: pagination?.currentPage ?? 1,
-    totalPages: pagination?.totalPages ?? 1,
-  };
-}
-
-const LIST_TYPES = [
-  "phim-moi-cap-nhat",
-  "phim-le",
-  "phim-bo",
-  "long-tieng",
-  "thuyet-minh",
-  "dang-chieu",
-  "phim-chieu-rap",
-  "4k",
-] as const satisfies readonly string[];
-
-export type ListType = (typeof LIST_TYPES)[number];
-
-export const MOVIE_LIST_TYPES = LIST_TYPES;
+export type { ListType } from "./providers/types";
+export type { NamedItem, PagedMovies } from "./providers/base";
 
 export async function getMovieList(
   type: ListType = "phim-moi-cap-nhat",
   page = 1,
 ): Promise<PagedMovies> {
-  return withCache(`list:${type}:${page}`, "list", async () => {
-    const json = await mdpGet(`/danh-sach/${type}`, { page });
-    return toPagedMovies(json);
-  });
+  return withFallback((p) => p.getList(type, page));
 }
 
 export async function getHomeSections(): Promise<{ title: string; movies: MovieListItem[] }[]> {
@@ -223,115 +69,49 @@ export async function getHomeSections(): Promise<{ title: string; movies: MovieL
 }
 
 export async function searchMovies(keyword: string, limit = 12): Promise<MovieListItem[]> {
-  const kw = keyword.trim();
-  if (kw.length < 2) return [];
-  // Key normalize lowercase — "Conan" và "conan" dùng chung một cache entry.
-  return withCache(`search:${kw.toLowerCase()}:${limit}`, "list", async () => {
-    const json = await mdpGet("/tim-kiem", { keyword: kw, limit });
-    return toPagedMovies(json).items;
-  });
+  const results = await withFallback((p) => p.search(keyword, limit));
+  return results;
 }
 
-export async function getGenres(): Promise<{ name: string; slug: string }[]> {
-  return withCache("genres", "detail", async () => extractNamedItems(await mdpGet("/the-loai")));
+export async function getGenres(): Promise<NamedItem[]> {
+  return withFallback((p) => p.getGenres());
 }
 
-export async function getCountries(): Promise<{ name: string; slug: string }[]> {
-  return withCache("countries", "detail", async () =>
-    extractNamedItems(await mdpGet("/quoc-gia")),
-  );
+export async function getCountries(): Promise<NamedItem[]> {
+  return withFallback((p) => p.getCountries());
 }
 
-export async function getYears(): Promise<{ name: string; slug: string }[]> {
-  return withCache("years", "detail", async () => extractNamedItems(await mdpGet("/nam")));
-}
-
-function extractNamedItems(json: Record<string, unknown>): { name: string; slug: string }[] {
-  const data = (json.data ?? {}) as Record<string, unknown>;
-  const items = (json.items ?? data.items ?? []) as { name?: unknown; slug?: unknown }[];
-  return items
-    .filter((i) => i?.slug && i?.name)
-    .map((i) => ({ name: String(i.name), slug: String(i.slug) }));
+export async function getYears(): Promise<NamedItem[]> {
+  return withFallback((p) => p.getYears());
 }
 
 export async function getMoviesByGenre(slug: string, page = 1): Promise<PagedMovies> {
-  return withCache(`genre:${slug}:${page}`, "list", async () =>
-    toPagedMovies(await mdpGet(`/the-loai/${encodeURIComponent(slug)}`, { page })),
-  );
+  return withFallback((p) => p.getByGenre(slug, page));
 }
 
 export async function getMoviesByCountry(slug: string, page = 1): Promise<PagedMovies> {
-  return withCache(`country:${slug}:${page}`, "list", async () =>
-    toPagedMovies(await mdpGet(`/quoc-gia/${encodeURIComponent(slug)}`, { page })),
-  );
+  return withFallback((p) => p.getByCountry(slug, page));
 }
 
 export async function getMoviesByYear(year: string, page = 1): Promise<PagedMovies> {
-  return withCache(`year:${year}:${page}`, "list", async () =>
-    toPagedMovies(await mdpGet(`/nam/${encodeURIComponent(year)}`, { page })),
-  );
-}
-
-function normalizeEpisodes(rawEpisodes: unknown): EpisodeServer[] {
-  if (!Array.isArray(rawEpisodes)) return [];
-  return rawEpisodes.map((server) => {
-    const s = server as {
-      server_name?: string;
-      server_data?: { name?: string; slug?: string; link_embed?: unknown; link_m3u8?: unknown }[];
-    };
-    return {
-      serverName: (s.server_name ?? "Server #1").replace(/\s+/g, " ").trim(),
-      serverData: (s.server_data ?? []).map((ep) => ({
-        name: ep.name ?? "",
-        slug: ep.slug ?? "",
-        linkEmbed: str(ep.link_embed),
-        linkM3u8: str(ep.link_m3u8) || null,
-      })),
-    };
-  });
+  return withFallback((p) => p.getByYear(year, page));
 }
 
 export async function getMovieDetail(
   slug: string,
   opts: { maxAgeMs?: number } = {},
 ): Promise<MovieDetailResponse | null> {
-  return withCache(
-    `detail:${slug}`,
-    "detail",
-    async () => {
-    let json: Record<string, unknown>;
+  for (const provider of providers) {
     try {
-      json = await mdpGet(`/phim/${encodeURIComponent(slug)}`);
-    } catch {
-      return null;
+      const detail = await provider.getDetail(slug, opts);
+      if (detail) return detail;
+      // null = phim không tồn tại trên provider này → thử provider kế tiếp
+      // (slug không dùng chung giữa các provider, trừ khi trùng hợp hiếm)
+      continue;
+    } catch (error) {
+      if (!(error instanceof MdpError)) throw error;
+      // upstream fail → provider kế tiếp
     }
-    const movie = json.movie as (MdpItem & {
-      content?: string;
-      time?: string;
-      trailer_url?: unknown;
-      actor?: string[];
-      director?: string[];
-      category?: { name: string; slug: string }[];
-      country?: { name: string; slug: string }[];
-    }) | undefined;
-    if (!movie?.slug) return null;
-
-    const detail: MovieDetail = {
-      ...normalizeItem(movie),
-      content: movie.content ?? "",
-      time: movie.time ?? "",
-      actor: movie.actor ?? [],
-      director: movie.director ?? [],
-      category: movie.category ?? [],
-      country: movie.country ?? [],
-      trailerUrl: str(movie.trailer_url) || null,
-    };
-
-    return {
-      movie: detail,
-      episodes: normalizeEpisodes(json.episodes),
-    };
-    },
-    opts,
-  );
+  }
+  return null;
 }
