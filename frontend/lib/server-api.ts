@@ -14,12 +14,23 @@ if (!BASE_URL) {
 }
 
 // ─── Cache TTL theo BR-08: list 15 phút, detail 60 phút; MDP lỗi → trả stale ───
+// Best-effort per-runtime cache.
+// Nằm trong bộ nhớ của MỘT runtime Node duy nhất — KHÔNG chia sẻ giữa
+// các instance serverless của Vercel. Mỗi cold start là một cache mới.
 const TTL_MS = { list: 15 * 60 * 1000, detail: 60 * 60 * 1000 } as const;
 const MAX_CACHE_ENTRIES = 500;
 
-type CacheEntry = { data: unknown; expiresAt: number };
+type CacheEntry = { data: unknown; storedAt: number; expiresAt: number };
 const responseCache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<unknown>>();
+
+/** Lỗi từ upstream MDP (HTTP lỗi, network, timeout) — đủ điều kiện stale-on-error. */
+export class MdpError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MdpError";
+  }
+}
 
 function evictIfNeeded() {
   while (responseCache.size >= MAX_CACHE_ENTRIES) {
@@ -33,27 +44,40 @@ async function withCache<T>(
   key: string,
   kind: keyof typeof TTL_MS,
   fetcher: () => Promise<T>,
+  opts: { maxAgeMs?: number } = {},
 ): Promise<T> {
   const now = Date.now();
   const hit = responseCache.get(key);
-  if (hit && hit.expiresAt > now) return hit.data as T;
+  // Fresh khi chưa hết TTL và (nếu có ràng buộc maxAgeMs) không cũ hơn maxAge.
+  // maxAgeMs dùng cho dữ liệu cần tươi hơn TTL chuẩn (VD: link video ở trang watch).
+  if (
+    hit &&
+    hit.expiresAt > now &&
+    now - hit.storedAt <= (opts.maxAgeMs ?? Number.POSITIVE_INFINITY)
+  ) {
+    return hit.data as T;
+  }
 
+  // In-flight dedup: các request đồng thời cùng key dùng chung 1 Promise.
   const pending = inflight.get(key);
   if (pending) return pending as Promise<T>;
 
   const task = fetcher()
     .then((data) => {
       evictIfNeeded();
-      responseCache.set(key, { data, expiresAt: Date.now() + TTL_MS[kind] });
+      responseCache.set(key, { data, storedAt: Date.now(), expiresAt: Date.now() + TTL_MS[kind] });
       return data;
     })
-    .finally(() => inflight.delete(key));
+    .finally(() => inflight.delete(key)); // cleanup cả success lẫn rejection
 
   inflight.set(key, task);
   try {
     return await task;
   } catch (error) {
-    if (hit) return hit.data as T; // stale-on-error
+    // Stale-on-error CHỈ cho lỗi upstream MDP (timeout/network/HTTP lỗi).
+    // Lỗi programming/runtime khác (TypeError trong normalize...) được rethrow,
+    // không nuốt lỗi bằng data cũ.
+    if (hit && error instanceof MdpError) return hit.data as T;
     throw error;
   }
 }
@@ -114,11 +138,21 @@ const MDP_TIMEOUT_MS = 8_000;
 async function mdpGet(path: string, params: Record<string, string | number> = {}) {
   const url = new URL(path.replace(/^\//, ""), `${BASE_URL}/`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
-  const res = await fetch(url.toString(), {
-    headers: { Accept: "application/json" },
-    signal: AbortSignal.timeout(MDP_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`MDP ${res.status}: ${path}`);
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(MDP_TIMEOUT_MS),
+    });
+  } catch (error) {
+    // Phân loại: timeout/abort hoặc network error đều là lỗi upstream → MdpError
+    const reason =
+      error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+        ? "timeout"
+        : "network error";
+    throw new MdpError(`MDP ${reason}: ${path}`);
+  }
+  if (!res.ok) throw new MdpError(`MDP ${res.status}: ${path}`);
   return res.json();
 }
 
@@ -191,8 +225,8 @@ export async function getHomeSections(): Promise<{ title: string; movies: MovieL
 export async function searchMovies(keyword: string, limit = 12): Promise<MovieListItem[]> {
   const kw = keyword.trim();
   if (kw.length < 2) return [];
-  // TTL ngắn hơn cho tìm kiếm để kết quả còn tương đối mới
-  return withCache(`search:${kw}:${limit}`, "list", async () => {
+  // Key normalize lowercase — "Conan" và "conan" dùng chung một cache entry.
+  return withCache(`search:${kw.toLowerCase()}:${limit}`, "list", async () => {
     const json = await mdpGet("/tim-kiem", { keyword: kw, limit });
     return toPagedMovies(json).items;
   });
@@ -257,8 +291,14 @@ function normalizeEpisodes(rawEpisodes: unknown): EpisodeServer[] {
   });
 }
 
-export async function getMovieDetail(slug: string): Promise<MovieDetailResponse | null> {
-  return withCache(`detail:${slug}`, "detail", async () => {
+export async function getMovieDetail(
+  slug: string,
+  opts: { maxAgeMs?: number } = {},
+): Promise<MovieDetailResponse | null> {
+  return withCache(
+    `detail:${slug}`,
+    "detail",
+    async () => {
     let json: Record<string, unknown>;
     try {
       json = await mdpGet(`/phim/${encodeURIComponent(slug)}`);
@@ -291,5 +331,7 @@ export async function getMovieDetail(slug: string): Promise<MovieDetailResponse 
       movie: detail,
       episodes: normalizeEpisodes(json.episodes),
     };
-  });
+    },
+    opts,
+  );
 }

@@ -2,6 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Player wrapper cho nguồn embed của MDP.
+ *
+ * GIỚI HẠN đã biết: iframe third-party — CineSync KHÔNG kiểm soát được
+ * buffering, bitrate, adaptive quality hay internals của player bên trong.
+ * Chỉ kiểm soát được vòng đời container (retry, timeout, fullscreen).
+ *
+ * Khi Backend cung cấp linkM3u8 thật, nhánh `isHls` là chỗ cắm HLS.js
+ * để kiểm soát đầy đủ playback. KHÔNG nhánh này thành HLS.js cho tới khi
+ * có nguồn HLS thực tế.
+ */
 interface VideoPlayerFrameProps {
   src: string;
   title: string;

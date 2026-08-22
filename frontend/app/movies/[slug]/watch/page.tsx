@@ -8,7 +8,9 @@ interface PageProps {
   searchParams: Promise<{ episode?: string }>;
 }
 
-export const revalidate = 600;
+// Trang watch là dynamic (không ISR): link video/embed cần tương đối tươi.
+// Metadata phim vẫn hưởng in-memory cache nhưng bị giới hạn 5 phút (maxAgeMs)
+// để tránh render link phát đã hết hạn, trong khi trang chi tiết vẫn ISR 10 phút.
 
 export default async function WatchPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
@@ -16,7 +18,7 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
 
   let data: Awaited<ReturnType<typeof getMovieDetail>> = null;
   try {
-    data = await getMovieDetail(slug);
+    data = await getMovieDetail(slug, { maxAgeMs: 5 * 60 * 1000 });
   } catch {
     data = null;
   }
