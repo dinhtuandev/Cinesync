@@ -66,7 +66,7 @@ export function Footer() {
         <Separator className="my-6" />
 
         <p className="text-center text-xs text-muted-foreground">
-          © {new Date().getFullYear()} CineSync. Dự án đồ án sinh viên CNTT.
+          © {new Date().getFullYear()} CineSync. Dự án với mục đích học tập và tham khảo không có mục đích thương mại.
         </p>
       </div>
     </footer>
