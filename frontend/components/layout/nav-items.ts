@@ -4,4 +4,5 @@ export const NAV_ITEMS = [
   { label: "Năm", href: "/years" },
   { label: "Phim lẻ", href: "/movies?type=phim-le" },
   { label: "Phim bộ", href: "/movies?type=phim-bo" },
+  { label: "Ngẫu nhiên", href: "/random" },
 ];
