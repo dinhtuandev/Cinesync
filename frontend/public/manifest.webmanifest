@@ -1,0 +1,42 @@
+{
+  "name": "CineSync — Xem phim cùng bạn bè",
+  "short_name": "CineSync",
+  "description": "Xem phim online miễn phí, tạo phòng xem chung real-time cùng bạn bè.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#e11d48",
+  "lang": "vi",
+  "categories": ["entertainment", "movies"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Tìm kiếm phim",
+      "url": "/search",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Phim mới cập nhật",
+      "url": "/movies?type=phim-moi-cap-nhat"
+    }
+  ]
+}

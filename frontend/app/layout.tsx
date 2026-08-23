@@ -1,7 +1,8 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Footer } from "@/components/layout/Footer";
 import { Header } from "@/components/layout/Header";
+import { PWARegister } from "@/components/common/PWARegister";
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -22,6 +23,20 @@ export const metadata: Metadata = {
   },
   description:
     "Xem phim online miễn phí, tạo phòng xem chung real-time cùng bạn bè, đánh giá và nhận gợi ý phim cá nhân hóa.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "CineSync",
+  },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/apple-touch-icon.png",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#e11d48",
 };
 
 export default function RootLayout({
@@ -33,6 +48,7 @@ export default function RootLayout({
     <html lang="vi" className="dark">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <Providers>
+          <PWARegister />
           <a
             href="#main-content"
             className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
