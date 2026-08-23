@@ -6,9 +6,10 @@ import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
 import { cn } from "@/lib/utils";
 
 export function MoviePosterCard({ movie, priority = false }: { movie: MovieListItem; priority?: boolean }) {
-  const sourceLabel = movie.source
-    ? (PROVIDER_LABELS[movie.source as ProviderKey] ?? null)
-    : null;
+  const sourceKey = (movie.source as ProviderKey | undefined) ?? null;
+  const sourceLabel = sourceKey ? (PROVIDER_LABELS[sourceKey] ?? null) : null;
+  const sourceDot =
+    sourceKey === "kkphim" ? "bg-amber-400" : sourceKey === "vsmov" ? "bg-sky-400" : null;
 
   return (
     <Link
@@ -39,7 +40,11 @@ export function MoviePosterCard({ movie, priority = false }: { movie: MovieListI
             {movie.quality}
           </Badge>
           {sourceLabel ? (
-            <span className="rounded border border-white/15 bg-neutral-800/90 px-1.5 py-0.5 text-[10px] font-medium leading-none text-neutral-200 backdrop-blur-sm">
+            <span className="inline-flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white/90 backdrop-blur-sm">
+              <span
+                aria-hidden
+                className={`size-1.5 rounded-full ${sourceDot ?? "bg-neutral-400"}`}
+              />
               {sourceLabel}
             </span>
           ) : null}

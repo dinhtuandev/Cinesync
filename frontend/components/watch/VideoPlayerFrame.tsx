@@ -96,7 +96,14 @@ export function VideoPlayerFrame({
     if (!api) return;
     try {
       const win = await api.requestWindow({ width: 640, height: 360 });
-      // Copy stylesheets để UI trong cửa sổ PiP giữ đúng theme
+      // Reset layout cửa sổ PiP: bỏ margin mặc định, nền đen, iframe
+      // phủ kín viewport — nếu không iframe sẽ vỡ layout (thanh trắng)
+      const base = win.document.createElement("style");
+      base.textContent =
+        "html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}" +
+        "body>div{width:100%;height:100%}";
+      win.document.head.appendChild(base);
+      // Copy stylesheets của app để overlay (loading/error) giữ đúng theme
       [...document.styleSheets].forEach((sheet) => {
         try {
           const css = [...sheet.cssRules].map((r) => r.cssText).join("");
