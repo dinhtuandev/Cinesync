@@ -2,9 +2,14 @@ import Link from "next/link";
 import { Play } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { MovieListItem } from "@/lib/types";
+import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
 import { cn } from "@/lib/utils";
 
 export function MoviePosterCard({ movie, priority = false }: { movie: MovieListItem; priority?: boolean }) {
+  const sourceLabel = movie.source
+    ? (PROVIDER_LABELS[movie.source as ProviderKey] ?? null)
+    : null;
+
   return (
     <Link
       href={`/movies/${movie.slug}`}
@@ -28,11 +33,18 @@ export function MoviePosterCard({ movie, priority = false }: { movie: MovieListI
 
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
 
-        <div className="absolute left-2 top-2 flex gap-1">
+        {/* Cột badge góc trên trái: chất lượng + nhãn nguồn */}
+        <div className="absolute left-2 top-2 flex flex-col items-start gap-1">
           <Badge className="h-5 border-none bg-black/70 px-1.5 text-[10px] font-semibold text-white">
             {movie.quality}
           </Badge>
+          {sourceLabel ? (
+            <span className="rounded border border-white/15 bg-neutral-800/90 px-1.5 py-0.5 text-[10px] font-medium leading-none text-neutral-200 backdrop-blur-sm">
+              {sourceLabel}
+            </span>
+          ) : null}
         </div>
+
         <Badge
           variant="secondary"
           className="absolute right-2 top-2 h-5 border-none bg-primary px-1.5 text-[10px] font-medium text-primary-foreground"

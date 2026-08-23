@@ -36,7 +36,7 @@ export function createVsmovProvider(baseUrl: string) {
       | { currentPage?: number; totalPages?: number }
       | null;
     return {
-      items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, IMAGE_CDN)),
+      items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, IMAGE_CDN, prefix)),
       page: pagination?.currentPage ?? 1,
       totalPages: pagination?.totalPages ?? 1,
       source: prefix,
@@ -127,7 +127,7 @@ export function createVsmovProvider(baseUrl: string) {
         if (!movie?.slug) return null;
 
         const detail = {
-          ...normalizeListItem(movie, IMAGE_CDN),
+          ...normalizeListItem(movie, IMAGE_CDN, prefix),
           content: movie.content ?? "",
           time: movie.time ?? "",
           actor: movie.actor ?? [],

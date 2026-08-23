@@ -116,3 +116,134 @@ export async function getMovieDetail(
   }
   return null;
 }
+
+// ─── Multi-source: cả 2 nguồn chạy song song ───
+// - Trang chi tiết gộp server của cả 2 nguồn.
+// - Trang watch phát theo ?src=; nguồn hiện tại lỗi → UI đề xuất chuyển
+//   nguồn còn lại (fallback chéo).
+
+type ProviderInstance = ReturnType<typeof createVsmovProvider>;
+
+function providerByKey(key: string): ProviderInstance | undefined {
+  return providers.find((p) => p.name === key);
+}
+
+/** Lấy chi tiết phim trực tiếp từ MỘT nguồn chỉ định (không fallback chain). */
+export async function getMovieDetailFromSource(
+  key: string,
+  slugOnSource: string,
+  opts: { maxAgeMs?: number } = {},
+): Promise<MovieDetailResponse | null> {
+  const provider = providerByKey(key);
+  if (!provider) return null;
+  try {
+    return await provider.getDetail(slugOnSource, opts);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTitle(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Tìm slug tương đương của cùng một phim trên nguồn khác bằng cách so
+ * tên gốc/tên tiếng Việt + năm phát hành. Trả null nếu không tìm thấy.
+ */
+async function findCounterpartSlug(
+  targetKey: string,
+  ref: { name: string; originName: string; year: number },
+): Promise<string | null> {
+  const provider = providerByKey(targetKey);
+  if (!provider) return null;
+
+  const queries = [ref.originName, ref.name].filter(Boolean);
+  for (const query of queries) {
+    try {
+      const candidates = await provider.search(query, 10);
+      const target = normalizeTitle(ref.originName || ref.name);
+      const match =
+        candidates.find((c) => {
+          const cand = normalizeTitle(c.originName || c.name);
+          return target.length >= 4 && (cand.includes(target) || target.includes(cand));
+        }) ??
+        candidates.find(
+          (c) =>
+            Math.abs((c.year || 0) - (ref.year || 0)) <= 1 &&
+            normalizeTitle(c.name) === normalizeTitle(ref.name),
+        );
+      if (match) return match.slug;
+    } catch {
+      /* nguồn kia lỗi — bỏ qua */
+    }
+  }
+  return null;
+}
+
+/** Tìm slug của cùng phim trên nguồn chỉ định (dùng cho fallback chéo). */
+export async function findMovieOnSource(
+  targetKey: string,
+  ref: { name: string; originName: string; year: number },
+): Promise<string | null> {
+  return findCounterpartSlug(targetKey, ref);
+}
+
+export interface AggregatedDetail {
+  /** Chi tiết từ Nguồn 1 theo slug gốc */
+  primary: MovieDetailResponse | null;
+  /** Chi tiết từ Nguồn 2 (phim khớp theo tên/năm), kèm slug trên nguồn đó */
+  secondary: MovieDetailResponse | null;
+  secondarySlug: string | null;
+}
+
+/**
+ * Gộp chi tiết phim từ cả 2 nguồn chạy song song. Nguồn phụ được dò bằng
+ * tìm kiếm tiêu đề; mọi lỗi ở nguồn phụ không ảnh hưởng nguồn chính.
+ */
+export async function getAggregatedMovieDetail(
+  slug: string,
+  opts: { maxAgeMs?: number } = {},
+): Promise<AggregatedDetail> {
+  let primary: MovieDetailResponse | null = null;
+  try {
+    primary = await providers[0]?.getDetail(slug, opts) ?? null;
+  } catch {
+    primary = null;
+  }
+
+  const fallbackProvider = providers[1];
+  if (!fallbackProvider) return { primary, secondary: null, secondarySlug: null };
+
+  // Nếu nguồn chính không có phim → thử đối chiếu ngược từ fallback lên chính
+  const reference = primary?.movie ?? null;
+  let secondarySlug: string | null = null;
+
+  if (!reference) {
+    // Thử lấy trực tiếp từ nguồn phụ theo slug (hiếm khi trùng nhưng rẻ)
+    try {
+      const direct = await fallbackProvider.getDetail(slug, opts);
+      if (direct) return { primary: direct, secondary: null, secondarySlug: null };
+    } catch {
+      /* bỏ qua */
+    }
+    return { primary: null, secondary: null, secondarySlug: null };
+  }
+
+  secondarySlug = await findCounterpartSlug(fallbackProvider.name, {
+    name: reference.name,
+    originName: reference.originName,
+    year: reference.year,
+  });
+
+  let secondary: MovieDetailResponse | null = null;
+  if (secondarySlug) {
+    try {
+      secondary = await fallbackProvider.getDetail(secondarySlug, opts);
+    } catch {
+      secondary = null;
+    }
+  }
+
+  return { primary, secondary, secondarySlug };
+}

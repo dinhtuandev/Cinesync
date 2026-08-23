@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { createPortal } from "react-dom";
-import { PictureInPicture2, PictureInPicture } from "lucide-react";
+import { PictureInPicture2, PictureInPicture, Repeat } from "lucide-react";
 
 /**
  * Player wrapper cho nguồn embed của MDP.
@@ -26,6 +27,8 @@ interface VideoPlayerFrameProps {
   title: string;
   /** true nếu nguồn là link m3u8 (chưa phát trực tiếp được trong iframe) */
   isHls?: boolean;
+  /** Nguồn dự phòng: hiển thị nút chuyển nguồn trong overlay lỗi */
+  altSource?: { href: string; label: string } | null;
 }
 
 const LOAD_TIMEOUT_MS = 15_000;
@@ -35,7 +38,7 @@ interface DocPiPApi {
   window: Window | null;
 }
 
-export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrameProps) {
+export function VideoPlayerFrame({ src, title, isHls = false, altSource = null }: VideoPlayerFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -44,10 +47,12 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
 
   useEffect(() => {
     setStatus("loading");
-    if (!src || isHls) return;
+    if (!src) return;
+    // HLS native: chờ canplay; iframe: chờ onLoad. Treo quá hạn → error
+    // để UI đề xuất retry hoặc chuyển nguồn dự phòng.
     const timer = setTimeout(() => setStatus((s) => (s === "loading" ? "error" : s)), LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [src, reloadKey, isHls]);
+  }, [src, reloadKey]);
 
   // Feature detect sau mount để tránh hydration mismatch
   useEffect(() => {
@@ -121,17 +126,28 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
           referrerPolicy="no-referrer"
           className="h-full w-full border-0"
         />
+      ) : src && isHls ? (
+        // Thử phát HLS trực tiếp bằng <video> (Safari/iOS hỗ trợ gốc).
+        // Chrome desktop không decode m3u8 → onError → overlay lỗi → đề xuất
+        // chuyển nguồn. Khi Backend sẵn sàng sẽ thay bằng HLS.js.
+        <video
+          key={`v-${reloadKey}`}
+          controls
+          autoPlay
+          playsInline
+          onCanPlay={handleLoad}
+          onError={() => setStatus("error")}
+          className="h-full w-full border-0 bg-black"
+        >
+          <source src={src} type="application/x-mpegURL" />
+        </video>
       ) : (
         <div className="flex h-full flex-col items-center justify-center space-y-2 px-4 text-center">
-          <p className="text-sm text-neutral-400">
-            {isHls
-              ? "Nguồn HLS sẽ được phát bằng Player riêng khi Backend hoàn thiện"
-              : "Nguồn phát này chưa khả dụng"}
-          </p>
+          <p className="text-sm text-neutral-400">Nguồn phát này chưa khả dụng</p>
         </div>
       )}
 
-      {status === "loading" && !isHls ? (
+      {status === "loading" ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black">
           <div className="flex flex-col items-center gap-3">
             <div className="size-10 animate-spin rounded-full border-2 border-neutral-700 border-t-primary" />
@@ -148,7 +164,16 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
               Kết nối có thể bị gián đoạn khi xoay màn hình hoặc đổi mạng
             </p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            {altSource ? (
+              <Link
+                href={altSource.href}
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-primary px-5 text-sm font-semibold text-white transition hover:bg-primary/80"
+              >
+                <Repeat aria-hidden className="size-4" />
+                Chuyển sang {altSource.label}
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={handleRetry}
@@ -167,7 +192,7 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
         </div>
       ) : null}
 
-      {src && !isHls ? (
+      {src ? (
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -209,7 +234,7 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
       </div>
 
       {/* Thanh công cụ phụ dưới player */}
-      {src && !isHls ? (
+      {src ? (
         <div className="flex items-center justify-end gap-2">
           {pipSupported ? (
             <ButtonLike onClick={() => (pipWindow ? exitPip() : enterPip())}>

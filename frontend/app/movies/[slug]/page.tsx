@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ShareButton } from "@/components/common/ShareButton";
 import { PROVIDER_LABELS } from "@/lib/providers/types";
-import { getMovieDetail } from "@/lib/server-api";
+import { getAggregatedMovieDetail } from "@/lib/server-api";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -17,28 +17,53 @@ export const revalidate = 600;
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const data = await getMovieDetail(slug);
-  if (!data) return { title: "Không tìm thấy phim" };
+  const agg = await getAggregatedMovieDetail(slug);
+  const movie = agg.primary?.movie ?? agg.secondary?.movie;
+  if (!movie) return { title: "Không tìm thấy phim" };
   return {
-    title: data.movie.name,
-    description: data.movie.content?.slice(0, 160) || undefined,
+    title: movie.name,
+    description: movie.content?.slice(0, 160) || undefined,
     openGraph: {
-      title: data.movie.name,
-      images: data.movie.posterUrl ? [data.movie.posterUrl] : undefined,
+      title: movie.name,
+      images: movie.posterUrl ? [movie.posterUrl] : undefined,
     },
   };
 }
 
 export default async function MovieDetailPage({ params }: PageProps) {
   const { slug } = await params;
-  const data = await getMovieDetail(slug);
-  if (!data) notFound();
+  const agg = await getAggregatedMovieDetail(slug, { maxAgeMs: 5 * 60 * 1000 });
+  const { primary, secondary, secondarySlug } = agg;
+  const movie = primary?.movie ?? secondary?.movie;
+  if (!movie) notFound();
 
-  const { movie, episodes } = data;
-  const firstEpisode = episodes[0]?.serverData[0];
-  const watchHref = firstEpisode
-    ? `/movies/${movie.slug}/watch?episode=${encodeURIComponent(firstEpisode.slug)}`
-    : `/movies/${movie.slug}/watch`;
+  // Nhóm tập theo nguồn — cả 2 nguồn song song
+  const groups = [
+    primary && primary.episodes.length > 0
+      ? {
+          key: "1",
+          label: PROVIDER_LABELS["vsmov"],
+          eslug: slug,
+          episodes: primary.episodes,
+        }
+      : null,
+    secondary &&
+    secondary.episodes.length > 0 &&
+    secondarySlug
+      ? {
+          key: "2",
+          label: PROVIDER_LABELS["kkphim"],
+          eslug: secondarySlug,
+          episodes: secondary.episodes,
+        }
+      : null,
+  ].filter((g): g is NonNullable<typeof g> => g !== null);
+
+  const firstGroup = groups[0];
+  const firstEpisode = firstGroup?.episodes[0]?.serverData[0];
+  const watchHref = firstGroup && firstEpisode
+    ? `/movies/${slug}/watch?src=${firstGroup.key}&eslug=${encodeURIComponent(firstGroup.eslug)}&episode=${encodeURIComponent(firstEpisode.slug)}`
+    : `/movies/${slug}/watch`;
 
   const metaChips = [
     movie.quality,
@@ -46,7 +71,7 @@ export default async function MovieDetailPage({ params }: PageProps) {
     movie.year ? String(movie.year) : null,
     movie.episodeTotal ? `Tập ${movie.episodeCurrent ?? "?"}/${movie.episodeTotal}` : null,
     movie.time ? `${movie.time} phút` : null,
-    data.source ? (PROVIDER_LABELS[data.source as keyof typeof PROVIDER_LABELS] ?? null) : null,
+    groups.length > 1 ? "2 nguồn phát" : groups.length === 1 ? groups[0].label : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -180,39 +205,49 @@ export default async function MovieDetailPage({ params }: PageProps) {
         </Button>
       </section>
 
-      {/* Episodes */}
-      {episodes.length > 0 && episodes[0].serverData.length > 0 ? (
+      {/* Episodes — gộp cả 2 nguồn */}
+      {groups.length > 0 ? (
         <section aria-label="Danh sách tập phim" className="mt-10 space-y-6">
           <h2 className="text-lg font-semibold tracking-tight">Danh sách tập</h2>
-          {episodes.map((server) => (
-            <div key={server.serverName} className="space-y-3">
-              {episodes.length > 1 ? (
-                <h3 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-                  <Separator orientation="vertical" className="h-4" />
+          {groups.map((group) =>
+            group.episodes.map((server) => (
+              <div
+                key={`${group.key}-${server.serverName}`}
+                className={groups.length > 1 ? "space-y-3 rounded-xl border border-border bg-card/30 p-4" : "space-y-3"}
+              >
+                <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium text-muted-foreground">
+                  {groups.length > 1 ? (
+                    <>
+                      <Badge variant="outline" className="font-normal">
+                        {group.label}
+                      </Badge>
+                      <Separator orientation="vertical" className="hidden h-4 sm:block" />
+                    </>
+                  ) : null}
                   {server.serverName}
                 </h3>
-              ) : null}
-              <ol className="grid max-h-80 grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2 overflow-y-auto rounded-xl border border-border bg-card/50 p-3">
-                {server.serverData.map((ep) => (
-                  <li key={ep.slug}>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      className="w-full justify-center font-normal"
-                      asChild
-                    >
-                      <Link
-                        href={`/movies/${movie.slug}/watch?episode=${encodeURIComponent(ep.slug)}`}
-                        aria-label={`Xem ${ep.name}`}
+                <ol className="grid max-h-80 grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2 overflow-y-auto">
+                  {server.serverData.map((ep) => (
+                    <li key={`${group.key}-${ep.slug}`}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="w-full justify-center font-normal"
+                        asChild
                       >
-                        {ep.name}
-                      </Link>
-                    </Button>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ))}
+                        <Link
+                          href={`/movies/${slug}/watch?src=${group.key}&eslug=${encodeURIComponent(group.eslug)}&episode=${encodeURIComponent(ep.slug)}`}
+                          aria-label={`Xem ${ep.name} (${group.label})`}
+                        >
+                          {ep.name}
+                        </Link>
+                      </Button>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )),
+          )}
         </section>
       ) : (
         <section aria-label="Danh sách tập phim" className="mt-10">

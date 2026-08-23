@@ -48,7 +48,7 @@ export function createKkphimProvider(baseUrl: string) {
       pagination?: { currentPage?: number; totalPages?: number };
     };
     return {
-      items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, cdn)),
+      items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, cdn, prefix)),
       page: params.pagination?.currentPage ?? 1,
       totalPages: params.pagination?.totalPages ?? 1,
       source: prefix,
@@ -152,7 +152,7 @@ export function createKkphimProvider(baseUrl: string) {
         if (!item?.slug) return null;
 
         const detail: MovieDetail = {
-          ...normalizeListItem(item, cdn),
+          ...normalizeListItem(item, cdn, prefix),
           content: item.content ?? "",
           time: item.time ?? "",
           actor: item.actor ?? [],

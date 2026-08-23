@@ -9,6 +9,8 @@ export interface MovieListItem {
   lang: "Vietsub" | "Lồng tiếng" | "Thuyết minh";
   episodeCurrent?: number;
   episodeTotal?: number;
+  /** Provider key ("vsmov"/"kkphim") — hiển thị nhãn nguồn trên card */
+  source?: string;
 }
 
 export interface MovieCategory {

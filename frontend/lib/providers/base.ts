@@ -167,6 +167,7 @@ export interface MovieProviderRawItem {
 export function normalizeListItem(
   item: MovieProviderRawItem,
   imageCdn: string,
+  providerKey?: string,
 ): MovieListItem {
   const isSeries = item.type === "series";
   return {
@@ -182,5 +183,6 @@ export function normalizeListItem(
       isSeries && typeof item.episode_current === "number" ? item.episode_current : undefined,
     episodeTotal:
       isSeries && typeof item.episode_total === "number" ? item.episode_total : undefined,
+    source: providerKey,
   };
 }
