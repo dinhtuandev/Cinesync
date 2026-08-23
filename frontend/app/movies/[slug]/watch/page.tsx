@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, ChevronLeft, ChevronRight, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AmbientModeToggle } from "@/components/watch/AmbientModeToggle";
 import { VideoPlayerFrame } from "@/components/watch/VideoPlayerFrame";
 import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
 import {
@@ -134,6 +135,7 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
         title={`${movie.name} — ${activeEpisode.name}`}
         isHls={hlsOnly}
         altSource={altSource}
+        toolbarLeft={<AmbientModeToggle posterUrl={movie.posterUrl || movie.thumbUrl} />}
       />
 
       {/* Điều khiển tập */}

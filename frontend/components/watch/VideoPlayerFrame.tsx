@@ -29,6 +29,8 @@ interface VideoPlayerFrameProps {
   isHls?: boolean;
   /** Nguồn dự phòng: hiển thị nút chuyển nguồn trong overlay lỗi */
   altSource?: { href: string; label: string } | null;
+  /** Nút phụ hiển thị bên trái thanh công cụ dưới player (VD: Ambient Mode) */
+  toolbarLeft?: React.ReactNode;
 }
 
 const LOAD_TIMEOUT_MS = 15_000;
@@ -38,7 +40,13 @@ interface DocPiPApi {
   window: Window | null;
 }
 
-export function VideoPlayerFrame({ src, title, isHls = false, altSource = null }: VideoPlayerFrameProps) {
+export function VideoPlayerFrame({
+  src,
+  title,
+  isHls = false,
+  altSource = null,
+  toolbarLeft,
+}: VideoPlayerFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -235,7 +243,8 @@ export function VideoPlayerFrame({ src, title, isHls = false, altSource = null }
 
       {/* Thanh công cụ phụ dưới player */}
       {src ? (
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">{toolbarLeft}</div>
           {pipSupported ? (
             <ButtonLike onClick={() => (pipWindow ? exitPip() : enterPip())}>
               <PictureInPicture aria-hidden className="size-4" />

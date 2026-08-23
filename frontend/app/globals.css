@@ -24,6 +24,27 @@
   background: oklch(0.45 0 0);
 }
 
+/* ─── Ambient Mode (chế độ rạp chiếu phim) ───
+   Bật qua class `ambient-on` trên <html> (AmbientModeToggle):
+   tối header/footer, nền trang đen sâu — ánh sáng tập trung vào player */
+html.ambient-on {
+  background: #000;
+}
+html.ambient-on body {
+  transition: filter 0.6s ease;
+}
+html.ambient-on header,
+html.ambient-on footer,
+html.ambient-on nav[aria-label="Breadcrumb"],
+html.ambient-on section[aria-label="Danh sách tập"] {
+  filter: brightness(0.35) saturate(0.85);
+}
+@media (prefers-reduced-motion: reduce) {
+  html.ambient-on body {
+    transition: none;
+  }
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: var(--font-sans);
