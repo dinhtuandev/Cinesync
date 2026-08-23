@@ -37,7 +37,7 @@ html.ambient-on header,
 html.ambient-on footer,
 html.ambient-on nav[aria-label="Breadcrumb"],
 html.ambient-on section[aria-label="Danh sách tập"] {
-  filter: brightness(0.35) saturate(0.85);
+  filter: brightness(0.18) saturate(0.8);
 }
 @media (prefers-reduced-motion: reduce) {
   html.ambient-on body {
