@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { PictureInPicture2, PictureInPicture } from "lucide-react";
 
 /**
  * Player wrapper cho nguồn embed của MDP.
@@ -8,8 +10,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * GIỚI HẠN đã biết: iframe third-party — CineSync KHÔNG kiểm soát được
  * buffering, bitrate, adaptive quality, watermark/logo của player nguồn
  * hay internals bên trong. Chỉ kiểm soát được vòng đời container
- * (retry, timeout, fullscreen). `referrerPolicy="no-referrer"` giữ lại
+ * (retry, timeout, fullscreen, PiP). `referrerPolicy="no-referrer"` giữ lại
  * để provider không thấy domain CineSync trong referer log.
+ *
+ * Picture-in-Picture dùng Document PiP API (Chromium desktop): cả player
+ * được render vào cửa sổ luôn-nổi, xem tiếp khi rời tab. Mobile không hỗ
+ * trợ API này — nút sẽ ẩn đi.
  *
  * Khi Backend cung cấp linkM3u8 thật, nhánh `isHls` là chỗ cắm HLS.js
  * để kiểm soát đầy đủ playback. KHÔNG nhánh này thành HLS.js cho tới khi
@@ -24,10 +30,17 @@ interface VideoPlayerFrameProps {
 
 const LOAD_TIMEOUT_MS = 15_000;
 
+interface DocPiPApi {
+  requestWindow: (opts?: { width?: number; height?: number }) => Promise<Window>;
+  window: Window | null;
+}
+
 export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [pipWindow, setPipWindow] = useState<Window | null>(null);
+  const [pipSupported, setPipSupported] = useState(false);
 
   useEffect(() => {
     setStatus("loading");
@@ -35,6 +48,11 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
     const timer = setTimeout(() => setStatus((s) => (s === "loading" ? "error" : s)), LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [src, reloadKey, isHls]);
+
+  // Feature detect sau mount để tránh hydration mismatch
+  useEffect(() => {
+    setPipSupported(typeof window !== "undefined" && "documentPictureInPicture" in window);
+  }, []);
 
   const handleLoad = useCallback(() => setStatus("ready"), []);
 
@@ -59,8 +77,39 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
     }
   }, []);
 
-  return (
-    <div ref={containerRef} className="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+  // ─── Document Picture-in-Picture ───
+  const enterPip = useCallback(async () => {
+    const api = (window as unknown as { documentPictureInPicture?: DocPiPApi }).documentPictureInPicture;
+    if (!api) return;
+    try {
+      const win = await api.requestWindow({ width: 640, height: 360 });
+      // Copy stylesheets để UI trong cửa sổ PiP giữ đúng theme
+      [...document.styleSheets].forEach((sheet) => {
+        try {
+          const css = [...sheet.cssRules].map((r) => r.cssText).join("");
+          const style = win.document.createElement("style");
+          style.textContent = css;
+          win.document.head.appendChild(style);
+        } catch {
+          /* CORS stylesheet — bỏ qua */
+        }
+      });
+      win.document.title = `${title} — CineSync`;
+      win.addEventListener("pagehide", () => setPipWindow(null));
+      setPipWindow(win);
+    } catch {
+      /* user hủy hoặc lỗi — bỏ qua */
+    }
+  }, [title]);
+
+  const exitPip = useCallback(() => {
+    pipWindow?.close();
+    setPipWindow(null);
+  }, [pipWindow]);
+
+  /** Nội dung player — render ở trang chính HOẶC cửa sổ PiP */
+  const playerContent = (
+    <div className="relative h-full w-full overflow-hidden bg-black">
       {src && !isHls ? (
         <iframe
           key={reloadKey}
@@ -85,7 +134,7 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
       {status === "loading" && !isHls ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black">
           <div className="flex flex-col items-center gap-3">
-            <div className="h-10 w-10 animate-spin rounded-full border-2 border-neutral-700 border-t-rose-600" />
+            <div className="size-10 animate-spin rounded-full border-2 border-neutral-700 border-t-primary" />
             <p className="text-xs text-neutral-400">Đang tải nguồn phát...</p>
           </div>
         </div>
@@ -103,7 +152,7 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
             <button
               type="button"
               onClick={handleRetry}
-              className="rounded-full bg-rose-600 px-6 py-2 text-sm font-semibold text-white transition hover:bg-rose-700"
+              className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white transition hover:bg-primary/80"
             >
               Thử lại
             </button>
@@ -123,11 +172,65 @@ export function VideoPlayerFrame({ src, title, isHls = false }: VideoPlayerFrame
           type="button"
           onClick={toggleFullscreen}
           aria-label="Toàn màn hình"
+          title="Toàn màn hình"
           className="absolute right-2 top-2 z-10 rounded-lg bg-black/60 px-3 py-1.5 text-xs text-white opacity-70 backdrop-blur transition hover:opacity-100 md:hidden"
         >
           ⛶
         </button>
       ) : null}
     </div>
+  );
+
+  return (
+    <>
+      {/* Khi đang PiP: khung chính hiển thị trạng thái */}
+      <div ref={containerRef} className="relative aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-border/60">
+        {pipWindow ? (
+          createPortal(playerContent, pipWindow.document.body)
+        ) : (
+          playerContent
+        )}
+
+        {pipWindow ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/95 text-center">
+            <PictureInPicture2 className="size-8 text-muted-foreground" aria-hidden />
+            <p className="max-w-xs text-sm text-muted-foreground">
+              Player đang phát trong cửa sổ mini — bạn có thể chuyển sang tab khác.
+            </p>
+            <button
+              type="button"
+              onClick={exitPip}
+              className="rounded-full border border-border px-5 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+            >
+              Thu về trang chính
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Thanh công cụ phụ dưới player */}
+      {src && !isHls ? (
+        <div className="flex items-center justify-end gap-2">
+          {pipSupported ? (
+            <ButtonLike onClick={() => (pipWindow ? exitPip() : enterPip())}>
+              <PictureInPicture aria-hidden className="size-4" />
+              {pipWindow ? "Đóng mini player" : "Xem ngoài tab (mini)"}
+            </ButtonLike>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function ButtonLike({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-[0.8rem] font-medium text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      {children}
+    </button>
   );
 }
