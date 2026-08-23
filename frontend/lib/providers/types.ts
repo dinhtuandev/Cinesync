@@ -17,6 +17,17 @@ export const VSMOV_LIST_TYPES = [
 
 export type ListType = (typeof VSMOV_LIST_TYPES)[number];
 
+/**
+ * Nhãn nguồn hiển thị cho người dùng — KHÔNG lộ tên/domain provider thật.
+ * Nguồn 1 = primary (VSMOV), Nguồn 2 = fallback (KKPhim).
+ */
+export type ProviderKey = "vsmov" | "kkphim";
+
+export const PROVIDER_LABELS: Record<ProviderKey, string> = {
+  vsmov: "Nguồn 1",
+  kkphim: "Nguồn 2",
+};
+
 /** KKPhim chỉ có 1 nhóm danh sách tương ứng; còn lại trả rỗng. */
 const KKPHIM_LIST_TYPE_MAP: Partial<Record<ListType, string>> = {
   "phim-moi-cap-nhat": "phim-moi-cap-nhat",

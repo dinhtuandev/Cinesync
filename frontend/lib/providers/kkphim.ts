@@ -51,6 +51,7 @@ export function createKkphimProvider(baseUrl: string) {
       items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, cdn)),
       page: params.pagination?.currentPage ?? 1,
       totalPages: params.pagination?.totalPages ?? 1,
+      source: prefix,
     };
   }
 
@@ -164,6 +165,7 @@ export function createKkphimProvider(baseUrl: string) {
         return {
           movie: detail,
           episodes: normalizeEpisodes(item.episodes),
+          source: prefix,
         };
       }, opts);
     },

@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { VideoPlayerFrame } from "@/components/watch/VideoPlayerFrame";
+import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
 import { getMovieDetail } from "@/lib/server-api";
 
 interface PageProps {
@@ -65,6 +66,11 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
         </Button>
         {activeServer.serverData.length > 1 ? (
           <Badge variant="secondary">{activeEpisode.name}</Badge>
+        ) : null}
+        {data.source ? (
+          <Badge variant="outline" className="font-normal text-muted-foreground">
+            {PROVIDER_LABELS[data.source as ProviderKey] ?? "Nguồn phim"}
+          </Badge>
         ) : null}
       </nav>
 

@@ -39,6 +39,7 @@ export function createVsmovProvider(baseUrl: string) {
       items: rawItems.filter((i) => i?.slug).map((i) => normalizeListItem(i, IMAGE_CDN)),
       page: pagination?.currentPage ?? 1,
       totalPages: pagination?.totalPages ?? 1,
+      source: prefix,
     };
   }
 
@@ -139,6 +140,7 @@ export function createVsmovProvider(baseUrl: string) {
         return {
           movie: detail,
           episodes: normalizeEpisodes(json.episodes),
+          source: prefix,
         };
       }, opts);
     },

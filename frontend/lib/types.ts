@@ -41,6 +41,8 @@ export interface EpisodeServer {
 export interface MovieDetailResponse {
   movie: MovieDetail;
   episodes: EpisodeServer[];
+  /** Provider key ("vsmov"/"kkphim") — hiển thị nhãn "Nguồn 1"/"Nguồn 2" */
+  source?: string;
   internal?: {
     avgRating: number;
     ratingCount: number;

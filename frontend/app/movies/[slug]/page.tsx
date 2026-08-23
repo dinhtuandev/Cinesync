@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ShareButton } from "@/components/common/ShareButton";
+import { PROVIDER_LABELS } from "@/lib/providers/types";
 import { getMovieDetail } from "@/lib/server-api";
 
 interface PageProps {
@@ -45,6 +46,7 @@ export default async function MovieDetailPage({ params }: PageProps) {
     movie.year ? String(movie.year) : null,
     movie.episodeTotal ? `Tập ${movie.episodeCurrent ?? "?"}/${movie.episodeTotal}` : null,
     movie.time ? `${movie.time} phút` : null,
+    data.source ? (PROVIDER_LABELS[data.source as keyof typeof PROVIDER_LABELS] ?? null) : null,
   ].filter(Boolean) as string[];
 
   return (

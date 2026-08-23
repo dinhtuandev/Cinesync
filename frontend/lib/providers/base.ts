@@ -14,6 +14,8 @@ export interface PagedMovies {
   items: MovieListItem[];
   page: number;
   totalPages: number;
+  /** Provider key phục vụ hiển thị nhãn nguồn ("Nguồn 1"/"Nguồn 2") */
+  source?: string;
 }
 
 export interface NamedItem {
