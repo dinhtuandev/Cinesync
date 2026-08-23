@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Repeat } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AmbientModeToggle } from "@/components/watch/AmbientModeToggle";
+import { NextEpisodeBanner } from "@/components/watch/NextEpisodeBanner";
 import { VideoPlayerFrame } from "@/components/watch/VideoPlayerFrame";
 import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
 import {
@@ -203,6 +204,15 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
             </p>
           ) : null}
         </section>
+      ) : null}
+
+      {/* Gợi ý chuyển tập khi ước lượng đã xem hết (F4) */}
+      {nextEpisode ? (
+        <NextEpisodeBanner
+          nextHref={epHref(nextEpisode.slug)}
+          nextName={nextEpisode.name}
+          durationSeconds={(Number(movie.time) > 0 ? Number(movie.time) : 45) * 60}
+        />
       ) : null}
     </div>
   );
