@@ -4,25 +4,49 @@ import type { MovieDetailResponse, MovieListItem } from "./types";
 import { MdpError, type NamedItem, type PagedMovies } from "./providers/base";
 import { createKkphimProvider } from "./providers/kkphim";
 import { createVsmovProvider } from "./providers/vsmov";
-import type { ListType } from "./providers/types";
+import { createVidsrcProvider } from "./providers/vidsrc";
+import { SOURCE_ORDER, type ListType, type ProviderKey } from "./providers/types";
 
-// ─── Fallback chain: VSMOV là PRIMARY, KKPhim là FALLBACK khi VSMOV sập ───
+// ─── Multi-provider: VSMOV (1) + KKPhim (2) chạy song song,
+// vidsrc (3, TMDB + embed) chỉ đăng ký khi có TMDB_API_KEY ───
 // - Provider fail (timeout/network/HTTP lỗi) → thử provider kế tiếp.
 // - Lỗi programming/runtime khác được rethrow ngay, không nuốt.
-// - Mỗi provider tự cache với key prefix riêng (`vsmov:`, `kkphim:`),
-//   stale-on-error vẫn hoạt động ở tầng từng provider.
+// - Mỗi provider tự cache với key prefix riêng, stale-on-error ở tầng provider.
 
 const PROVIDER_BASE_URLS = [
   process.env.MOVIE_PROVIDER_BASE_URL,
   process.env.MOVIE_PROVIDER_FALLBACK_URL,
 ].filter((url): url is string => Boolean(url));
 
-const providers = PROVIDER_BASE_URLS.map((baseUrl, index) =>
-  index === 0 ? createVsmovProvider(baseUrl) : createKkphimProvider(baseUrl),
-);
+type ProviderInstance = ReturnType<typeof createVsmovProvider>;
+
+const providers: ProviderInstance[] = [];
+if (PROVIDER_BASE_URLS[0]) providers.push(createVsmovProvider(PROVIDER_BASE_URLS[0]));
+if (PROVIDER_BASE_URLS[1]) providers.push(createKkphimProvider(PROVIDER_BASE_URLS[1]));
+if (process.env.TMDB_API_KEY) {
+  providers.push(
+    createVidsrcProvider({
+      tmdbBaseUrl: process.env.TMDB_BASE_URL || "https://api.themoviedb.org/3",
+      apiKey: process.env.TMDB_API_KEY,
+      embedBaseUrl: process.env.VIDSRC_BASE_URL || "https://vidsrc.sbs",
+    }),
+  );
+}
 
 if (!providers.length) {
   console.warn("MOVIE_PROVIDER_BASE_URL chưa cấu hình — dữ liệu phim sẽ không tải được");
+}
+
+/** Số nguồn trên URL (?src=N) → provider key. Bỏ qua nguồn chưa đăng ký. */
+export function sourceKeyFromNumber(src: string | undefined): ProviderKey | null {
+  const n = Number(src);
+  if (!Number.isInteger(n) || n < 1 || n > SOURCE_ORDER.length) return null;
+  const key = SOURCE_ORDER[n - 1];
+  return providers.some((p) => p.name === key) ? key : null;
+}
+
+export function sourceNumberOf(key: ProviderKey): number {
+  return SOURCE_ORDER.indexOf(key) + 1;
 }
 
 async function withFallback<T>(fn: (provider: (typeof providers)[number]) => Promise<T>): Promise<T> {
@@ -117,12 +141,10 @@ export async function getMovieDetail(
   return null;
 }
 
-// ─── Multi-source: cả 2 nguồn chạy song song ───
-// - Trang chi tiết gộp server của cả 2 nguồn.
+// ─── Multi-source: mọi nguồn đăng ký chạy song song ───
+// - Trang chi tiết gộp server của tất cả nguồn.
 // - Trang watch phát theo ?src=; nguồn hiện tại lỗi → UI đề xuất chuyển
 //   nguồn còn lại (fallback chéo).
-
-type ProviderInstance = ReturnType<typeof createVsmovProvider>;
 
 function providerByKey(key: string): ProviderInstance | undefined {
   return providers.find((p) => p.name === key);
@@ -189,22 +211,29 @@ export async function findMovieOnSource(
   return findCounterpartSlug(targetKey, ref);
 }
 
+export interface SourceDetail {
+  key: ProviderKey;
+  slugOnSource: string;
+  detail: MovieDetailResponse;
+}
+
 export interface AggregatedDetail {
-  /** Chi tiết từ Nguồn 1 theo slug gốc */
+  /** Key của nguồn chứa `primary` (thường là nguồn 1) */
+  primaryKey: ProviderKey;
   primary: MovieDetailResponse | null;
-  /** Chi tiết từ Nguồn 2 (phim khớp theo tên/năm), kèm slug trên nguồn đó */
-  secondary: MovieDetailResponse | null;
-  secondarySlug: string | null;
+  /** Chi tiết từ các nguồn còn lại (đối chiếu theo tên/năm) */
+  others: SourceDetail[];
 }
 
 /**
- * Gộp chi tiết phim từ cả 2 nguồn chạy song song. Nguồn phụ được dò bằng
- * tìm kiếm tiêu đề; mọi lỗi ở nguồn phụ không ảnh hưởng nguồn chính.
+ * Gộp chi tiết phim từ TẤT CẢ nguồn đăng ký chạy song song. Nguồn phụ
+ * được dò bằng tìm kiếm tiêu đề; lỗi ở nguồn phụ không ảnh hưởng nguồn chính.
  */
 export async function getAggregatedMovieDetail(
   slug: string,
   opts: { maxAgeMs?: number } = {},
 ): Promise<AggregatedDetail> {
+  const primaryKey: ProviderKey = (providers[0]?.name as ProviderKey) ?? "vsmov";
   let primary: MovieDetailResponse | null = null;
   try {
     primary = await providers[0]?.getDetail(slug, opts) ?? null;
@@ -212,38 +241,49 @@ export async function getAggregatedMovieDetail(
     primary = null;
   }
 
-  const fallbackProvider = providers[1];
-  if (!fallbackProvider) return { primary, secondary: null, secondarySlug: null };
-
-  // Nếu nguồn chính không có phim → thử đối chiếu ngược từ fallback lên chính
   const reference = primary?.movie ?? null;
-  let secondarySlug: string | null = null;
-
   if (!reference) {
-    // Thử lấy trực tiếp từ nguồn phụ theo slug (hiếm khi trùng nhưng rẻ)
-    try {
-      const direct = await fallbackProvider.getDetail(slug, opts);
-      if (direct) return { primary: direct, secondary: null, secondarySlug: null };
-    } catch {
-      /* bỏ qua */
+    // Nguồn chính không có phim → thử lần lượt nguồn còn lại theo slug gốc
+    for (const provider of providers.slice(1)) {
+      try {
+        const direct = await provider.getDetail(slug, opts);
+        if (direct) {
+          return {
+            primaryKey: provider.name as ProviderKey,
+            primary: direct,
+            others: [],
+          };
+        }
+      } catch {
+        /* bỏ qua */
+      }
     }
-    return { primary: null, secondary: null, secondarySlug: null };
+    return { primaryKey, primary: null, others: [] };
   }
 
-  secondarySlug = await findCounterpartSlug(fallbackProvider.name, {
-    name: reference.name,
-    originName: reference.originName,
-    year: reference.year,
-  });
+  const ref = { name: reference.name, originName: reference.originName, year: reference.year };
 
-  let secondary: MovieDetailResponse | null = null;
-  if (secondarySlug) {
-    try {
-      secondary = await fallbackProvider.getDetail(secondarySlug, opts);
-    } catch {
-      secondary = null;
-    }
-  }
+  // Dò các nguồn còn lại song song
+  const others = await Promise.all(
+    providers
+      .filter((p) => p.name !== primaryKey)
+      .map(async (provider) => {
+        const key = provider.name as ProviderKey;
+        try {
+          const slugOnSource = await findCounterpartSlug(key, ref);
+          if (!slugOnSource) return null;
+          const detail = await provider.getDetail(slugOnSource, opts);
+          if (!detail || detail.episodes.length === 0) return null;
+          return { key, slugOnSource, detail } satisfies SourceDetail;
+        } catch {
+          return null;
+        }
+      }),
+  );
 
-  return { primary, secondary, secondarySlug };
+  return {
+    primaryKey,
+    primary,
+    others: others.filter((o): o is SourceDetail => o !== null),
+  };
 }

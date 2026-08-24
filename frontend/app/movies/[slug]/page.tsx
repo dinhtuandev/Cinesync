@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ShareButton } from "@/components/common/ShareButton";
-import { PROVIDER_LABELS } from "@/lib/providers/types";
-import { getAggregatedMovieDetail } from "@/lib/server-api";
+import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
+import { getAggregatedMovieDetail, sourceNumberOf } from "@/lib/server-api";
 
 interface PageProps {
   params: Promise<{ slug: string }>;
@@ -18,7 +18,7 @@ export const revalidate = 600;
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
   const agg = await getAggregatedMovieDetail(slug);
-  const movie = agg.primary?.movie ?? agg.secondary?.movie;
+  const movie = agg.primary?.movie ?? agg.others[0]?.detail.movie;
   if (!movie) return { title: "Không tìm thấy phim" };
   return {
     title: movie.name,
@@ -33,36 +33,36 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 export default async function MovieDetailPage({ params }: PageProps) {
   const { slug } = await params;
   const agg = await getAggregatedMovieDetail(slug, { maxAgeMs: 5 * 60 * 1000 });
-  const { primary, secondary, secondarySlug } = agg;
-  const movie = primary?.movie ?? secondary?.movie;
+  const { primary, primaryKey, others } = agg;
+  const movie = primary?.movie ?? others[0]?.detail.movie;
   if (!movie) notFound();
 
-  // Nhóm tập theo nguồn — cả 2 nguồn song song
+  // Nhóm tập theo nguồn — mọi nguồn đăng ký chạy song song
   const groups = [
     primary && primary.episodes.length > 0
       ? {
-          key: "1",
-          label: PROVIDER_LABELS["vsmov"],
+          key: primaryKey,
+          label: PROVIDER_LABELS[primaryKey],
           eslug: slug,
           episodes: primary.episodes,
         }
       : null,
-    secondary &&
-    secondary.episodes.length > 0 &&
-    secondarySlug
-      ? {
-          key: "2",
-          label: PROVIDER_LABELS["kkphim"],
-          eslug: secondarySlug,
-          episodes: secondary.episodes,
-        }
-      : null,
+    ...others.map((o) =>
+      o.detail.episodes.length > 0
+        ? {
+            key: o.key,
+            label: PROVIDER_LABELS[o.key],
+            eslug: o.slugOnSource,
+            episodes: o.detail.episodes,
+          }
+        : null,
+    ),
   ].filter((g): g is NonNullable<typeof g> => g !== null);
 
   const firstGroup = groups[0];
   const firstEpisode = firstGroup?.episodes[0]?.serverData[0];
   const watchHref = firstGroup && firstEpisode
-    ? `/movies/${slug}/watch?src=${firstGroup.key}&eslug=${encodeURIComponent(firstGroup.eslug)}&episode=${encodeURIComponent(firstEpisode.slug)}`
+    ? `/movies/${slug}/watch?src=${sourceNumberOf(firstGroup.key as ProviderKey)}&eslug=${encodeURIComponent(firstGroup.eslug)}&episode=${encodeURIComponent(firstEpisode.slug)}`
     : `/movies/${slug}/watch`;
 
   const metaChips = [
@@ -71,7 +71,7 @@ export default async function MovieDetailPage({ params }: PageProps) {
     movie.year ? String(movie.year) : null,
     movie.episodeTotal ? `Tập ${movie.episodeCurrent ?? "?"}/${movie.episodeTotal}` : null,
     movie.time ? `${movie.time} phút` : null,
-    groups.length > 1 ? "2 nguồn phát" : groups.length === 1 ? groups[0].label : null,
+    groups.length > 1 ? `${groups.length} nguồn phát` : groups.length === 1 ? groups[0].label : null,
   ].filter(Boolean) as string[];
 
   return (
@@ -236,7 +236,7 @@ export default async function MovieDetailPage({ params }: PageProps) {
                         asChild
                       >
                         <Link
-                          href={`/movies/${slug}/watch?src=${group.key}&eslug=${encodeURIComponent(group.eslug)}&episode=${encodeURIComponent(ep.slug)}`}
+                          href={`/movies/${slug}/watch?src=${sourceNumberOf(group.key as ProviderKey)}&eslug=${encodeURIComponent(group.eslug)}&episode=${encodeURIComponent(ep.slug)}`}
                           aria-label={`Xem ${ep.name} (${group.label})`}
                         >
                           {ep.name}

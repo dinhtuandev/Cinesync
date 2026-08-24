@@ -9,7 +9,13 @@ export function MoviePosterCard({ movie, priority = false }: { movie: MovieListI
   const sourceKey = (movie.source as ProviderKey | undefined) ?? null;
   const sourceLabel = sourceKey ? (PROVIDER_LABELS[sourceKey] ?? null) : null;
   const sourceDot =
-    sourceKey === "kkphim" ? "bg-amber-400" : sourceKey === "vsmov" ? "bg-sky-400" : null;
+    sourceKey === "kkphim"
+      ? "bg-amber-400"
+      : sourceKey === "vidsrc"
+        ? "bg-violet-400"
+        : sourceKey === "vsmov"
+          ? "bg-sky-400"
+          : null;
 
   return (
     <Link

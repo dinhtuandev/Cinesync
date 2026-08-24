@@ -6,11 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { AmbientModeToggle } from "@/components/watch/AmbientModeToggle";
 import { NextEpisodeBanner } from "@/components/watch/NextEpisodeBanner";
 import { VideoPlayerFrame } from "@/components/watch/VideoPlayerFrame";
-import { PROVIDER_LABELS, type ProviderKey } from "@/lib/providers/types";
+import { PROVIDER_LABELS, SOURCE_ORDER, type ProviderKey } from "@/lib/providers/types";
 import {
   findMovieOnSource,
   getMovieDetail,
   getMovieDetailFromSource,
+  sourceKeyFromNumber,
+  sourceNumberOf,
 } from "@/lib/server-api";
 
 interface PageProps {
@@ -26,18 +28,18 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   const { episode: episodeParam, src: srcParam, eslug: eslugParam } = await searchParams;
 
-  // src=2 → phát từ Nguồn 2 bằng eslug (slug riêng của nguồn đó)
-  const sourceKey: ProviderKey = srcParam === "2" ? "kkphim" : "vsmov";
-  const sourceNumber = sourceKey === "kkphim" ? "2" : "1";
+  // ?src=N → phát từ Nguồn N bằng eslug (slug riêng của nguồn đó)
+  const sourceKey: ProviderKey = sourceKeyFromNumber(srcParam) ?? "vsmov";
+  const sourceNumber = String(sourceNumberOf(sourceKey));
 
   let data: Awaited<ReturnType<typeof getMovieDetail>> = null;
   try {
-    if (sourceKey === "kkphim") {
-      data = await getMovieDetailFromSource("kkphim", eslugParam ?? "", { maxAgeMs: 5 * 60 * 1000 });
-    } else {
+    if (sourceKey === "vsmov") {
       data =
         (await getMovieDetailFromSource("vsmov", eslugParam || slug, { maxAgeMs: 5 * 60 * 1000 })) ??
         (await getMovieDetail(slug, { maxAgeMs: 5 * 60 * 1000 }));
+    } else {
+      data = await getMovieDetailFromSource(sourceKey, eslugParam ?? "", { maxAgeMs: 5 * 60 * 1000 });
     }
   } catch {
     data = null;
@@ -79,26 +81,29 @@ export default async function WatchPage({ params, searchParams }: PageProps) {
       ? activeServer.serverData[episodeIndex + 1]
       : null;
 
-  // ─── Fallback chéo: tính link nguồn còn lại để đề xuất khi nguồn hiện tại lỗi ───
+  // ─── Fallback chéo: tìm nguồn khác có cùng phim để đề xuất khi lỗi ───
   let altSource: { href: string; label: string } | null = null;
   try {
-    if (sourceKey === "vsmov" && movie.slug) {
-      const counterpartSlug = await findMovieOnSource("kkphim", {
-        name: movie.name,
-        originName: movie.originName,
-        year: movie.year,
-      });
-      if (counterpartSlug && counterpartSlug !== movie.slug) {
+    const ref = { name: movie.name, originName: movie.originName, year: movie.year };
+    for (const altKey of SOURCE_ORDER) {
+      if (altKey === sourceKey) continue;
+      const altNumber = sourceNumberOf(altKey);
+      if (altKey === "vsmov") {
+        // Nguồn 1 dùng slug gốc của URL
         altSource = {
-          href: `/movies/${movie.slug}/watch?src=2&eslug=${encodeURIComponent(counterpartSlug)}`,
-          label: PROVIDER_LABELS["kkphim"],
+          href: `/movies/${movie.slug}/watch`,
+          label: PROVIDER_LABELS["vsmov"],
         };
+        break;
       }
-    } else if (sourceKey === "kkphim") {
-      altSource = {
-        href: `/movies/${movie.slug}/watch`,
-        label: PROVIDER_LABELS["vsmov"],
-      };
+      const counterpartSlug = await findMovieOnSource(altKey, ref);
+      if (counterpartSlug) {
+        altSource = {
+          href: `/movies/${movie.slug}/watch?src=${altNumber}&eslug=${encodeURIComponent(counterpartSlug)}`,
+          label: PROVIDER_LABELS[altKey],
+        };
+        break;
+      }
     }
   } catch {
     altSource = null;
